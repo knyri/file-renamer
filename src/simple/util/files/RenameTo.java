@@ -1,8 +1,6 @@
 package simple.util.files;
 
 import java.awt.BorderLayout;
-import java.awt.FlowLayout;
-import java.awt.Font;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
 import java.awt.dnd.DnDConstants;
@@ -13,44 +11,30 @@ import java.awt.dnd.DropTargetEvent;
 import java.awt.dnd.DropTargetListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.awt.event.ComponentAdapter;
-import java.awt.event.ComponentEvent;
-import java.io.BufferedOutputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.util.TimerTask;
 import java.util.Vector;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import javax.swing.DefaultListModel;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JFrame;
-import javax.swing.JList;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
-import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingWorker;
 
 import simple.gui.AboutWindow;
 import simple.gui.SDialog;
 import simple.gui.SwingWorkerProgressWindow;
+import simple.gui.component.MoveableJList;
 import simple.gui.component.SMenuBar;
 import simple.gui.factory.SJOptionPane;
 import simple.gui.factory.SJPanel;
 import simple.gui.factory.SwingFactory;
-import simple.io.FileUtil;
 import simple.io.ParseException;
 import simple.io.RenameFormat;
-import simple.io.StreamFactory;
 import simple.util.FileLoader;
-import simple.util.Utils;
 import simple.util.do_str;
 /**
  * Rename Tokens:
@@ -98,161 +82,29 @@ import simple.util.do_str;
  *
  */
 public final class RenameTo implements ActionListener, DropTargetListener {
+	private final UndoRename undoRename= new UndoRename();
 	final DefaultListModel<File> gfileListMod = new DefaultListModel<File>();
-	final JList<File> gfileListDis = new JList<File>(gfileListMod);
+	final MoveableJList<File> gfileListDis = new MoveableJList<File>(gfileListMod);
 	final JTextField gtfSyntax = new JTextField();
-	final JProgressBar previewProgress=new JProgressBar();
-	final JFrame gPreviewFrame;
-	final JTextArea gPreviewText = new JTextArea();
-	final JTextField gtfRep1 = new JTextField();
-	final JTextField gtfRep2 = new JTextField();
+	final ProgressDialog gPreviewFrame;
+	final JTextField
+		gtfRep1 = new JTextField(),
+		gtfRep2 = new JTextField();
 	//final JComboBox gReplaceCombo = new JComboBox();
 	final JFrame gParentFrame = SwingFactory.makeDefaultJFrame("Rename Utility");
-	final JCheckBoxMenuItem gRecursiveAddCheck = new JCheckBoxMenuItem("Add Subdirectories");
-	final JCheckBoxMenuItem gUndoFileCheck = new JCheckBoxMenuItem("Make Undo File");
-	final JCheckBoxMenuItem gResolveUrlCharsCheck = new JCheckBoxMenuItem("Resolve URL Characters");
-	final JCheckBoxMenuItem gUriFriendlyFile = new JCheckBoxMenuItem("URI Friendly File Name");
-	final JCheckBoxMenuItem gUriFriendlyDir = new JCheckBoxMenuItem("URI Friendly Dir Name");
+	final JCheckBoxMenuItem
+		gRecursiveAddCheck = new JCheckBoxMenuItem("Add Subdirectories"),
+		gUndoFileCheck = new JCheckBoxMenuItem("Make Undo File"),
+		gResolveUrlCharsCheck = new JCheckBoxMenuItem("Resolve URL Characters"),
+		gUriFriendlyFile = new JCheckBoxMenuItem("URI Friendly File Name"),
+		gUriFriendlyDir = new JCheckBoxMenuItem("URI Friendly Dir Name");
 	final AboutWindow gHelpWin;
 	final SwingWorkerProgressWindow gFileLoaderWin = new SwingWorkerProgressWindow(gParentFrame, "Adding Files");
-	File gLogFile;
 	private int giStart = 0;
-	private final ScheduledThreadPoolExecutor TIMER = new ScheduledThreadPoolExecutor(1);
 	private final SDialog gFilterWin = new SDialog(gParentFrame, "Select files", true);
 	final JTextField gFilterInput = new JTextField();
-	private final Runnable doRename= new Runnable(){
-		final StringBuffer output=new StringBuffer();
-		final Runnable update=new Runnable(){
-			@Override
-			public void run(){
-				String app=output.toString();
-				output.setLength(0);
-				gPreviewText.append(app);
-				previewProgress.setValue(progress);
-			}
-		};
-		private int progress=0;
-		@Override
-		public void run(){
-			ScheduledFuture<?> task= TIMER.scheduleAtFixedRate(update,0,700,TimeUnit.MILLISECONDS);
-			BufferedOutputStream out = null;
-			if (gUndoFileCheck.isSelected()) {
-				gLogFile = new File(Utils.getTimeDate()+".undo");
-				try {
-					out = StreamFactory.getBufferedOutputStream(gLogFile);
-					gPreviewText.append("Undo file created.\n");
-				} catch (final FileNotFoundException e) {
-					gPreviewText.append("Error making undo file.\n"+e.toString());
-					e.printStackTrace();
-				}
-			}
-			RenameFormat rfTmp;
-			try{
-				rfTmp=new RenameFormat(null,gtfSyntax.getText());
-			}catch(ParseException e1){
-				output.append(e1.getMessage());
-				return;
-			}
-			int err = 0;
-			rfTmp.setNumber(giStart);
-			previewProgress.setValue(0);
-			previewProgress.setMaximum(gfileListMod.size());
-			for(progress=0;progress<gfileListMod.size();progress++) {
-				rfTmp.setFile(gfileListMod.get(progress));
-				if (rfTmp.rename()>0) {
-					err++;
-				}
-				output.append("Source:\t"+rfTmp.toString()+"\n"+
-						rfTmp.getError()+":\t"+rfTmp.toStringTarget()+"\n");
-				if (gUndoFileCheck.isSelected() && out != null) {
-					try {
-						out.write((rfTmp.toString()+"\t"+rfTmp.toStringTarget()+"\n").getBytes("UTF-8"));
-					} catch (final IOException e) {
-						e.printStackTrace();
-					}
-				}
-			}
-			if (out!=null)
-				FileUtil.close(out);
-			task.cancel(false);
-			update.run();
-			gPreviewText.append(err+" errors.\nDone.");
-			previewProgress.setValue(previewProgress.getMaximum());
-		}
-	},
-	doUndo=new Runnable(){
-		final StringBuffer output=new StringBuffer();
-		final Runnable update=new Runnable(){
-			@Override
-			public void run(){
-				String app=output.toString();
-				output.setLength(0);
-				gPreviewText.append(app);
-				previewProgress.setValue(progress);
-			}
-		};
-		private int progress=0;
-		@Override
-		public void run(){
-			ScheduledFuture<?> task= TIMER.scheduleAtFixedRate(update,0,700,TimeUnit.MILLISECONDS);
-//			RenameFormat rfTmp = null;
-			int err = 0;
-			/*/ TODO: this needs to be redone
-
-			for (progress =0;progress<gfileListMod.size();progress++) {
-				rfTmp = gfileListMod.get(progress);
-				if (rfTmp.undo()>0) {
-					err++;
-				}
-				output.append("Source:\t"+rfTmp.toStringTarget()+"\n"+
-						rfTmp.getError()+":\t"+rfTmp.toStringTarget()+"\n");
-			}
-			*/
-			task.cancel(false);
-			update.run();
-			gPreviewText.append(err+" errors.\nDone.");
-			previewProgress.setValue(previewProgress.getMaximum());
-		}
-	},
-	doPreview=new Runnable(){
-		final StringBuffer output=new StringBuffer();
-		final TimerTask update=new TimerTask(){
-			@Override
-			public void run(){
-				String app=output.toString();
-				output.setLength(0);
-				gPreviewText.append(app);
-				previewProgress.setValue(progress);
-			}
-		};
-		private int progress=0;
-		@Override
-		public void run(){
-			ScheduledFuture<?> task= TIMER.scheduleAtFixedRate(update,0,700,TimeUnit.MILLISECONDS);
-			RenameFormat rfTmp;
-			try{
-				rfTmp=new RenameFormat(null,gtfSyntax.getText());
-			}catch(ParseException e1){
-				output.append(e1.getMessage());
-				return;
-			}
-			int err = 0;
-			rfTmp.setNumber(giStart);
-			for (progress =0;progress<gfileListMod.size();progress++) {
-				rfTmp.setFile(gfileListMod.get(progress));
-				if (rfTmp.mockRename()>0){
-					err++;
-				}
-				output.append("Source:\t"+rfTmp.toString()+"\n"+
-						rfTmp.getError()+":\t"+rfTmp.toStringTarget()+"\n");
-			}
-			task.cancel(false);
-			update.run();
-
-			gPreviewText.append(err+" errors.\nDone.");
-			previewProgress.setValue(previewProgress.getMaximum());
-		}
-	};
+	private final FileActionRename doRename;
+	private final FileActionUndoRename doUndo;
 	public RenameTo() {
 		final DropTarget listDT = new DropTarget(gfileListDis, this);
 		gfileListDis.setDropTarget(listDT);
@@ -274,7 +126,7 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 		mTmp.setActionCommand("setN");
 		mTmp.addActionListener(this);
 		mBar.addToOptionMenu(mTmp);
-		mTmp = new JMenuItem("Replacements");
+		mTmp = new JMenuItem("Replacements (not implemented)");
 		mTmp.setActionCommand("addR");
 		mTmp.addActionListener(this);
 		mBar.addToOptionMenu(mTmp);
@@ -285,7 +137,7 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 		gResolveUrlCharsCheck.addActionListener(new ActionListener() {
 			@Override
 			public void actionPerformed(final ActionEvent e){
-					RenameFormat.fRESOLVEURLESCAPED=gResolveUrlCharsCheck.isSelected();
+					RenameFormat.fRESOLVEURLESCAPED= gResolveUrlCharsCheck.isSelected();
 			}
 		});
 		mBar.addToOptionMenu(gUndoFileCheck);
@@ -313,73 +165,26 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 		final ActionListener moveListener = new ActionListener() {
 			@Override
 			public void actionPerformed(final ActionEvent ae) {
-				boolean update = true;
-				if (gfileListDis.getSelectedIndex() == -1) return;
-				final int[] indices = gfileListDis.getSelectedIndices();
-				File tmp;
+				if (gfileListDis.getSelectedIndex() == -1){
+					return;
+				}
+
 				final String cmd = ae.getActionCommand();
 				if ("u".equals(cmd)) {
 				//move up one
-					if (indices[0] == 0) return;
-					tmp = gfileListMod.get(indices[0]-1);
-					for (int i = 0; i<indices.length; i++) {
-						gfileListMod.set(indices[i]-1, gfileListMod.get(indices[i]));
-						indices[i]--;
-					}
-					gfileListMod.set(indices[indices.length-1]+1, tmp);
+					gfileListDis.moveSelectedUp();
 				} else if ("d".equals(cmd)) {
 				//move down one
-					final int insertIndex = indices[indices.length-1]+1;
-					if (insertIndex == gfileListMod.size()) return;
-					tmp = gfileListMod.get(insertIndex);
-					for (int index = insertIndex; index > indices[0]; index--) {
-						gfileListMod.set(index, gfileListMod.get(index-1));
-					}
-					gfileListMod.set(indices[0], tmp);
-					for (int i = 0; i<indices.length; i++) {
-						indices[i]++;
-					}
+					gfileListDis.moveSelectedDown();
 				} else if ("t".equals(cmd)) {
 				//move to top
-					if (indices[0] == 0) return;
-					final File[] top = new File[indices[0]];
-					for (int i = 0; i < top.length; i++)
-						top[i] = gfileListMod.get(i);
-					for (int i = 0; i<indices.length; i++) {
-						gfileListMod.set(i, gfileListMod.get(indices[i]));
-						indices[i] = i;
-					}
-					final int offset = indices.length;
-					for (int i = 0; i<top.length; i++)
-						gfileListMod.set(i+offset, top[i]);
+					gfileListDis.moveSelectedToTop();
 				} else if ("b".equals(cmd)) {
 				//move to bottom
-					if (indices[indices.length-1] == gfileListMod.size()-1) return;
-					final File[] bottom = new File[gfileListMod.size()-indices[indices.length-1]-1];
-					int offset = indices[indices.length-1]+1;
-					for (int i = 0; i < bottom.length; i++)
-						bottom[i] = gfileListMod.get(i+offset);
-					offset = gfileListMod.size()-indices.length;
-					for (int i = 0; i<indices.length; i++) {
-						gfileListMod.set(i+offset, gfileListMod.get(indices[i]));
-						indices[i] = i+offset;
-					}
-					offset = offset-bottom.length;
-					for (int i = 0; i<bottom.length; i++)
-						gfileListMod.set(i+offset, bottom[i]);
+					gfileListDis.moveSelectedToBottom();
 				} else if ("r".equals(cmd)) {
 				//remove
-					int offset=0;
-					for(int i:indices){
-						gfileListMod.remove(i-offset);
-						offset++;
-					}
-					update = false;
-				}
-				if (update) {
-				//update selection to match new positions
-					gfileListDis.setSelectedIndices(indices);
-					gfileListDis.scrollRectToVisible(gfileListDis.getCellBounds(indices[0], indices[indices.length-1]));
+					gfileListDis.removeSelected();
 				}
 			}};
 			/*
@@ -403,31 +208,9 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 			/*
 			 * Create Rename Preview Window
 			 */
-			gPreviewFrame = SwingFactory.makeDefaultJFrame("Preview Rename");
-			gPreviewFrame.addComponentListener(new ComponentAdapter() {
-				@Override
-				public void componentHidden(ComponentEvent e) {
-					gPreviewText.setText("");
-					System.gc();
-				}
-				@Override
-				public void componentShown(ComponentEvent e) {}
-				});
-			gPreviewFrame.setSize(gParentFrame.getWidth(),300);
-			gPreviewText.setFont(new Font("Courier New", Font.PLAIN, 12));
-			main = new JPanel(new BorderLayout());
-			main.add(new JScrollPane(gPreviewText));
-			bottom = new JPanel(new FlowLayout(FlowLayout.CENTER));
-			bottom.add(SwingFactory.makeJButton("Close","cp",new ActionListener() {
-				@Override
-				public void actionPerformed(final ActionEvent arg0) {
-					gPreviewFrame.setVisible(false);
-					gPreviewText.setText("");
-				}
-			}));
-			main.add(bottom, BorderLayout.SOUTH);
-			main.add(previewProgress,BorderLayout.NORTH);
-			gPreviewFrame.add(main);
+			gPreviewFrame = new ProgressDialog(gParentFrame, "Rename Preview");
+			doRename= new FileActionRename(gPreviewFrame);
+			doUndo= new FileActionUndoRename(gPreviewFrame);
 			//End Rename Preview Creation
 
 			/*
@@ -518,25 +301,40 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 			}
 		}else if (ac.equals("rn")) {
 		//Rename
-			gPreviewFrame.setVisible(true);
-			gPreviewFrame.setLocationRelativeTo(null);
-			Thread rename=new Thread(doRename);
-			rename.start();
+			doRename.setFileList(gfileListMod);
+			doRename.setMakeUndo(gUndoFileCheck.isSelected());
+			doRename.setUndoList(undoRename);
+			doRename.setIsPreview(false);
+			try{
+				doRename.setRenameFormat(new RenameFormat(null, gtfSyntax.getText()));
+				Thread rename=new Thread(doRename);
+				rename.start();
+			}catch(ParseException e){
+				SJOptionPane.showErrorMessage(gParentFrame, e);
+				e.printStackTrace();
+			}
 		}else if (ac.equals("cl")) {
 		//Clear list
 			gfileListMod.clear();
 		}else if (ac.equals("un")) {
 		//Undo Renaming
-			gPreviewFrame.setVisible(true);
-			gPreviewFrame.setLocationRelativeTo(null);
+			doUndo.setUndoList(undoRename);
 			Thread undo=new Thread(doUndo);
 			undo.start();
 		}else if(ac.equals("pr")){
 		//Preview renaming
-			gPreviewFrame.setVisible(true);
-			gPreviewFrame.setLocationRelativeTo(null);
-			Thread preview=new Thread(doPreview);
-			preview.start();
+			doRename.setFileList(gfileListMod);
+			doRename.setMakeUndo(gUndoFileCheck.isSelected());
+			doRename.setUndoList(undoRename);
+			doRename.setIsPreview(true);
+			try{
+				doRename.setRenameFormat(new RenameFormat(null, gtfSyntax.getText()));
+				Thread rename=new Thread(doRename);
+				rename.start();
+			}catch(ParseException e){
+				SJOptionPane.showErrorMessage(gParentFrame, e);
+				e.printStackTrace();
+			}
 		}else if (ac.equals("setN")){
 		//set the start number for numbered renaming
 			final String tmp = SJOptionPane.prompt("Number file numbering will start at:", String.valueOf(giStart));
@@ -600,14 +398,8 @@ public final class RenameTo implements ActionListener, DropTargetListener {
 	@Override
 	@SuppressWarnings("unchecked")
 	public void drop(final DropTargetDropEvent dtde) {
-		final DataFlavor[] DFL = dtde.getCurrentDataFlavors();
-		Transferable dl = null;
-		for (final DataFlavor df : DFL) {
-			if (df.equals(DataFlavor.javaFileListFlavor)) {
-				dl = dtde.getTransferable();
-			}
-		}
-		if (dl == null) {
+		Transferable dl = dtde.getTransferable();
+		if(!dl.isDataFlavorSupported(DataFlavor.javaFileListFlavor)){
 			dtde.rejectDrop();
 			return;
 		}
